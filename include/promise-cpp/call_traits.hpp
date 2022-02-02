@@ -94,7 +94,12 @@ public:
     typedef typename the_type::argument_type argument_type;
 
     static fun_type to_std_function(const FUNCTOR &functor) {
-        return call_traits_impl<callable_type>::to_std_function(const_cast<FUNCTOR &>(functor), &FUNCTOR::operator());
+
+        // The destructor of a created function-object by call_traits_impl<>::to_std_function
+        // may cause heap corruption error on MSVC.
+        // Thus use std::function directly to avoid the error.
+        return std::function(functor);
+        // return call_traits_impl<callable_type>::to_std_function(const_cast<FUNCTOR &>(functor), &FUNCTOR::operator());
     }
 };
 
