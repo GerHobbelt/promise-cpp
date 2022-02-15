@@ -411,11 +411,17 @@ any *PromiseHolder::getUncaughtExceptionHandler() {
 
 any *PromiseHolder::getDefaultUncaughtExceptionHandler() {
     static any defaultUncaughtExceptionHandler = [](Promise &d) {
-        d.fail([](const std::runtime_error &err) {
-            fprintf(stderr, "onUncaughtException in line %d, %s\n", __LINE__, err.what());
-        }).fail([]() {
-            //go here for all other uncaught parameters.
-            fprintf(stderr, "onUncaughtException in line %d\n", __LINE__);
+        // Make the default UncaughtExceptionHandler receive std::exception_ptr
+        // according to the change in any.hpp which not treat exception_ptr as a special case.
+        d.fail([](std::exception_ptr ep) {
+            try {
+                std::rethrow_exception(ep);
+            } catch(std::runtime_error &err) {
+                fprintf(stderr, "onUncaughtException in line %d, %s\n", __LINE__, err.what());
+            } catch(...) {
+                //go here for all other uncaught parameters.
+                fprintf(stderr, "onUncaughtException in line %d\n", __LINE__);
+            }
         });
     };
 

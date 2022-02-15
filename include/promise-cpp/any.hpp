@@ -258,14 +258,16 @@ struct any_call_t<RET, std::tuple<NOCVR_ARG>, FUNC> {
         using nocvr_argument_type = std::tuple<NOCVR_ARG>;
         using any_arguemnt_type = std::vector<any>;
 
-        if (arg.type() == type_id<std::exception_ptr>()) {
-            try {
-                std::rethrow_exception(any_cast<std::exception_ptr>(arg));
-            }
-            catch (const NOCVR_ARG &ex_arg) {
-                return func(const_cast<NOCVR_ARG &>(ex_arg));
-            }
-        }
+// don't treat exception_ptr as a special case to make the reject handler
+// receive an exception_ptr instead of an exception reference.
+//        if (arg.type() == type_id<std::exception_ptr>()) {
+//            try {
+//                std::rethrow_exception(any_cast<std::exception_ptr>(arg));
+//            }
+//            catch (const NOCVR_ARG &ex_arg) {
+//                return func(const_cast<NOCVR_ARG &>(ex_arg));
+//            }
+//        }
 
         if (type_id<NOCVR_ARG>() == type_id<any_arguemnt_type>()) {
             return func(any_cast<NOCVR_ARG &>(arg));
@@ -324,16 +326,18 @@ inline any any_call(const FUNC &func, const any &arg) {
     if (!stdFunc)
         return any();
 
-    if (arg.type() == type_id<std::exception_ptr>()) {
-        try {
-            std::rethrow_exception(any_cast<std::exception_ptr>(arg));
-        }
-        catch (const any &ex_arg) {
-            return any_call_with_ret_t<typename call_traits<FUNC>::result_type, nocvr_argument_type, func_t>::call(stdFunc, ex_arg);
-        }
-        catch (...) {
-        }
-    }
+// don't treat exception_ptr as a special case to make the reject handler
+// receive an exception_ptr instead of an exception reference.
+//    if (arg.type() == type_id<std::exception_ptr>()) {
+//        try {
+//            std::rethrow_exception(any_cast<std::exception_ptr>(arg));
+//        }
+//        catch (const any &ex_arg) {
+//            return any_call_with_ret_t<typename call_traits<FUNC>::result_type, nocvr_argument_type, func_t>::call(stdFunc, ex_arg);
+//        }
+//        catch (...) {
+//        }
+//    }
 
     return any_call_with_ret_t<typename call_traits<FUNC>::result_type, nocvr_argument_type, func_t>::call(stdFunc, arg);
 }
