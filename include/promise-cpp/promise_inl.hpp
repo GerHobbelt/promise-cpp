@@ -5,6 +5,7 @@
 #include <cassert>
 #include <stdexcept>
 #include <vector>
+#include <thread>
 #include "promise.hpp"
 
 namespace promise {
@@ -108,7 +109,10 @@ static inline void join(const std::shared_ptr<PromiseHolder> &left, const std::s
     for (const std::weak_ptr<SharedPromise> &owner_ : owners) {
         std::shared_ptr<SharedPromise> owner = owner_.lock();
         if (owner) {
-            owner->promiseHolder_ = left;
+            std::shared_ptr<Mutex> mutex = owner->obtainLock();
+            std::lock_guard<Mutex> lock(*mutex, std::adopt_lock_t());
+
+            std::atomic_store(&owner->promiseHolder_, left);
             left->owners_.push_back(owner);
         }
     }
@@ -151,14 +155,25 @@ static inline void call(std::shared_ptr<Task> task) {
             std::lock_guard<Mutex> lock(*mutex);
 #endif
 
+            // タスクが kResolved／kRejected なときは何もしない
             if (task->state_ != TaskState::kPending) return;
 
+            // まだ promise が待機中のときは何もしないで処理を戻す。
+            // 後で promise::resolve() や Defer::reject() などが呼び出されたときは kPending でなくなり、このあとに処理が進む。
             if (promiseHolder->state_ == TaskState::kPending) return;
+
+            // promiseHolder が kResolved／kRejected のどちらかになっているので、タスクにもその状態を設定する。
             task->state_ = promiseHolder->state_;
 
+            // 待機中のタスクのリストを取得
             std::list<std::shared_ptr<Task>> &pendingTasks = promiseHolder->pendingTasks_;
+
             //promiseHolder->dump();
+
+            // promiseHolder_->state_ == TaskState::kResolved or kResolved のときは、
+            // task 以外の pendingTasks が存在しないはず。
             assert(pendingTasks.front() == task);
+
             pendingTasks.pop_front();
             //promiseHolder->dump();
 
@@ -172,7 +187,6 @@ static inline void call(std::shared_ptr<Task> task) {
 #if PROMISE_MULTITHREAD
                         std::shared_ptr<Mutex> mutex0 = nullptr;
                         auto call = [&]() -> any {
-                            unlock_guard_t lock(mutex);
                             const any &value = task->onResolved_.call(promiseHolder->value_);
                             // Make sure the returned promised is locked before than "mutex"
                             if (value.type() == type_id<Promise>()) {
@@ -222,7 +236,6 @@ static inline void call(std::shared_ptr<Task> task) {
 #if PROMISE_MULTITHREAD
                             std::shared_ptr<Mutex> mutex0 = nullptr;
                             auto call = [&]() -> any {
-                                unlock_guard_t lock(mutex);
                                 const any &value = task->onRejected_.call(promiseHolder->value_);
                                 // Make sure the returned promised is locked before than "mutex"
                                 if (value.type() == type_id<Promise>()) {

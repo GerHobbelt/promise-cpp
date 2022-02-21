@@ -49,6 +49,8 @@ inline ValueType any_cast(const any &operand);
 
 class any {
 public: // structors
+
+    std::recursive_mutex mutable mtx;
     any()
         : content(0) {
     }
@@ -70,6 +72,7 @@ public: // structors
     // Move constructor
     any(any &&other)
         : content(other.content) {
+        std::scoped_lock lock (mtx, other.mtx);
         other.content = 0;
     }
 
@@ -88,6 +91,7 @@ public: // structors
     }
 
     any call(const any &arg) const {
+        std::scoped_lock lock (mtx, arg.mtx);
         return content ? content->call(arg) : any();
     }
 
@@ -111,6 +115,7 @@ public: // structors
 public: // modifiers
 
     any & swap(any & rhs) {
+        std::scoped_lock lock (mtx, rhs.mtx);
         std::swap(content, rhs.content);
         return *this;
     }
@@ -128,6 +133,7 @@ public: // modifiers
 
 public: // queries
     bool empty() const {
+        std::scoped_lock lock (mtx);
         return !content;
     }
     
@@ -136,6 +142,7 @@ public: // queries
     }
 
     type_index type() const {
+        std::scoped_lock lock (mtx);
         return content ? content->type() : type_id<void>();
     }
 
