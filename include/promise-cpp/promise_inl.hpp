@@ -462,7 +462,8 @@ void PromiseHolder::handleUncaughtException(const any &onUncaughtException) {
 #if PROMISE_MULTITHREAD
 std::shared_ptr<Mutex> SharedPromise::obtainLock() const {
     while (true) {
-        std::shared_ptr<Mutex> mutex = this->promiseHolder_->mutex_;
+        auto holder = std::atomic_load(&this->promiseHolder_);
+        std::shared_ptr<Mutex> mutex = holder->mutex_;
         mutex->lock();
 
         // pointer to mutex may be changed after locked, 
