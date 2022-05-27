@@ -31,6 +31,7 @@
 #include <vector>
 #include "add_ons.hpp"
 #include "call_traits.hpp"
+#include <typeinfo>
 
 namespace promise {
 
@@ -156,6 +157,7 @@ public: // types (public so any_cast can be non-friend)
         virtual type_index type() const = 0;
         virtual placeholder *clone() const = 0;
         virtual any call(const any &arg) const = 0;
+        virtual std::string name() const = 0;
     };
 
     template<typename ValueType>
@@ -176,6 +178,10 @@ public: // types (public so any_cast can be non-friend)
 
         virtual any call(const any &arg) const {
             return any_call(held, arg);
+        }
+
+        virtual std::string name() const {
+            return typeid(*this).name();
         }
     public: // representation
         ValueType held;
