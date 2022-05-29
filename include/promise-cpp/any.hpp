@@ -181,7 +181,7 @@ public: // types (public so any_cast can be non-friend)
         }
 
         virtual std::string name() const {
-            return typeid(*this).name();
+            return typeid(ValueType).name();
         }
     public: // representation
         ValueType held;
