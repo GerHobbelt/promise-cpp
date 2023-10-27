@@ -1,3 +1,5 @@
+散了吧，cpp20 coroutine了，这么代码已经没有意义 -- 作者
+
 # C++ promise/A+ library in Javascript style.
 
 <!-- TOC -->
@@ -52,7 +54,7 @@
 
 ## What is promise-cpp ?
 
-Promise-cpp is library that implements promise/A+ standard, which can be the base component in event-looped asychronized programming. It is NOT std::promise.
+Promise-cpp is library that implements promise/A+ standard, which can be the base component in event-looped asynchronized programming. It is NOT std::promise.
 
 ## Features
 

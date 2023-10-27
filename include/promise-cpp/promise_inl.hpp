@@ -260,10 +260,11 @@ static inline void call(const Loc &loc, std::shared_ptr<Task> task) {
                         //to next resolved task
                     }
                     else {
+                        promiseHolder->state_ = TaskState::kPending; // avoid recursive task using this state
 #if PROMISE_MULTITHREAD
                         std::shared_ptr<Mutex> mutex0 = nullptr;
                         auto call = [&]() -> any {
-                            unlock_guard_t lock(mutex);
+                            unlock_guard_t lock_inner(mutex);
                             threadLocalPromiseHolders().push_back(promiseHolder);
                             const any &value = task->onResolved_.call(promiseHolder->value_);
                             threadLocalPromiseHolders().pop_back();
@@ -314,10 +315,11 @@ static inline void call(const Loc &loc, std::shared_ptr<Task> task) {
                     }
                     else {
                         try {
+                            promiseHolder->state_ = TaskState::kPending; // avoid recursive task using this state
 #if PROMISE_MULTITHREAD
                             std::shared_ptr<Mutex> mutex0 = nullptr;
                             auto call = [&]() -> any {
-                                unlock_guard_t lock(mutex);
+                                unlock_guard_t lock_inner(mutex);
                                 threadLocalPromiseHolders().push_back(promiseHolder);
                                 const any &value = task->onRejected_.call(promiseHolder->value_);
                                 threadLocalPromiseHolders().pop_back();
@@ -360,9 +362,15 @@ static inline void call(const Loc &loc, std::shared_ptr<Task> task) {
                         }
                         catch (const bad_any_cast &) {
                             //just go through if argument type is not match
+                            promiseHolder->state_ = TaskState::kRejected;
                         }
                     }
                 }
+            }
+            catch (const promise::bad_any_cast &ex) {
+                fprintf(stderr, "promise::bad_any_cast: %s -> %s", ex.from_.name(), ex.to_.name());
+                promiseHolder->value_ = std::current_exception();
+                promiseHolder->state_ = TaskState::kRejected;
             }
             catch (...) {
                 promiseHolder->value_ = std::current_exception();
@@ -624,20 +632,24 @@ Promise &Promise::then(const Loc &loc, const any &deferOrPromiseOrOnResolved) {
     else if (deferOrPromiseOrOnResolved.type() == type_id<Promise>()) {
         Promise &promise = deferOrPromiseOrOnResolved.cast<Promise &>();
 
+        std::shared_ptr<Task> task;
+        {
 #if PROMISE_MULTITHREAD
-        std::shared_ptr<Mutex> mutex0 = this->sharedPromise_->obtainLock();
-        std::lock_guard<Mutex> lock0(*mutex0, std::adopt_lock_t());
-        std::shared_ptr<Mutex> mutex1 = promise.sharedPromise_->obtainLock();
-        std::lock_guard<Mutex> lock1(*mutex1, std::adopt_lock_t());
+            std::shared_ptr<Mutex> mutex0 = this->sharedPromise_->obtainLock();
+            std::lock_guard<Mutex> lock0(*mutex0, std::adopt_lock_t());
+            std::shared_ptr<Mutex> mutex1 = promise.sharedPromise_->obtainLock();
+            std::lock_guard<Mutex> lock1(*mutex1, std::adopt_lock_t());
 #endif
 
-        if (promise.sharedPromise_ && promise.sharedPromise_->promiseHolder_) {
-            join(this->sharedPromise_->promiseHolder_, promise.sharedPromise_->promiseHolder_);
-            if (this->sharedPromise_->promiseHolder_->pendingTasks_.size() > 0) {
-                std::shared_ptr<Task> task = this->sharedPromise_->promiseHolder_->pendingTasks_.front();
-                call(loc, task);
+            if (promise.sharedPromise_ && promise.sharedPromise_->promiseHolder_) {
+                join(this->sharedPromise_->promiseHolder_, promise.sharedPromise_->promiseHolder_);
+                if (this->sharedPromise_->promiseHolder_->pendingTasks_.size() > 0) {
+                    task = this->sharedPromise_->promiseHolder_->pendingTasks_.front();
+                }
             }
         }
+        if(task)
+            call(loc, task);
         return *this;
     }
     else {
@@ -646,19 +658,22 @@ Promise &Promise::then(const Loc &loc, const any &deferOrPromiseOrOnResolved) {
 }
 
 Promise &Promise::then(const Loc &loc, const any &onResolved, const any &onRejected) {
+    std::shared_ptr<Task> task;
+    {
 #if PROMISE_MULTITHREAD
-    std::shared_ptr<Mutex> mutex = this->sharedPromise_->obtainLock();
-    std::lock_guard<Mutex> lock(*mutex, std::adopt_lock_t());
+        std::shared_ptr<Mutex> mutex = this->sharedPromise_->obtainLock();
+        std::lock_guard<Mutex> lock(*mutex, std::adopt_lock_t());
 #endif
 
-    std::shared_ptr<Task> task = std::make_shared<Task>(Task {
-        TaskState::kPending,
-        sharedPromise_->promiseHolder_,
-        loc,
-        onResolved,
-        onRejected
-    });
-    sharedPromise_->promiseHolder_->pendingTasks_.push_back(task);
+        task = std::make_shared<Task>(Task {
+            TaskState::kPending,
+            sharedPromise_->promiseHolder_,
+            loc,
+            onResolved,
+            onRejected
+        });
+        sharedPromise_->promiseHolder_->pendingTasks_.push_back(task);
+    }
     call(loc, task);
     return *this;
 }
@@ -694,14 +709,20 @@ Promise &Promise::finally(const Loc &loc, const any &onFinally) {
 
 void Promise::resolve(const Loc &loc, const any &arg) const {
     if (!this->sharedPromise_) return;
+    std::shared_ptr<Task> task;
+    {
 #if PROMISE_MULTITHREAD
-    std::shared_ptr<Mutex> mutex = this->sharedPromise_->obtainLock();
-    std::lock_guard<Mutex> lock(*mutex, std::adopt_lock_t());
+        std::shared_ptr<Mutex> mutex = this->sharedPromise_->obtainLock();
+        std::lock_guard<Mutex> lock(*mutex, std::adopt_lock_t());
 #endif
 
-    std::list<std::shared_ptr<Task>> &pendingTasks_ = this->sharedPromise_->promiseHolder_->pendingTasks_;
-    if (pendingTasks_.size() > 0) {
-        std::shared_ptr<Task> &task = pendingTasks_.front();
+        std::list<std::shared_ptr<Task>> &pendingTasks_ = this->sharedPromise_->promiseHolder_->pendingTasks_;
+        if (pendingTasks_.size() > 0) {
+            task = pendingTasks_.front();
+        }
+    }
+
+    if (task) {
         Defer defer(task);
         defer.resolve(loc, arg);
     }
@@ -709,14 +730,20 @@ void Promise::resolve(const Loc &loc, const any &arg) const {
 
 void Promise::reject(const Loc &loc, const any &arg) const {
     if (!this->sharedPromise_) return;
+    std::shared_ptr<Task> task;
+    {
 #if PROMISE_MULTITHREAD
-    std::shared_ptr<Mutex> mutex = this->sharedPromise_->obtainLock();
-    std::lock_guard<Mutex> lock(*mutex, std::adopt_lock_t());
+        std::shared_ptr<Mutex> mutex = this->sharedPromise_->obtainLock();
+        std::lock_guard<Mutex> lock(*mutex, std::adopt_lock_t());
 #endif
 
-    std::list<std::shared_ptr<Task>> &pendingTasks_ = this->sharedPromise_->promiseHolder_->pendingTasks_;
-    if (pendingTasks_.size() > 0) {
-        std::shared_ptr<Task> &task = pendingTasks_.front();
+        std::list<std::shared_ptr<Task>> &pendingTasks_ = this->sharedPromise_->promiseHolder_->pendingTasks_;
+        if (pendingTasks_.size() > 0) {
+            task = pendingTasks_.front();
+        }
+    }
+
+    if (task) {
         Defer defer(task);
         defer.reject(loc, arg);
     }
@@ -837,30 +864,51 @@ Promise all(const Loc &loc, const std::list<Promise> &promise_list) {
     });
 }
 
-Promise race(const Loc &loc, const std::list<Promise> &promise_list) {
+static Promise race(const Loc &loc, const std::list<Promise> &promise_list, std::shared_ptr<int> winner) {
     return newPromise(loc, [=](Defer &defer) {
-        for (auto promise : promise_list) {
+        int index = 0;
+        for (auto it = promise_list.begin(); it != promise_list.end(); ++it, ++index) {
+            auto promise = *it;
             promise.then(loc, [=](const any &arg) {
+                *winner = index;
                 defer.resolve(loc, arg);
+                return arg;
             }, [=](const any &arg) {
+                *winner = index;
                 defer.reject(loc, arg);
+                return arg;
             });
         }
     });
 }
 
+Promise race(const Loc &loc, const std::list<Promise> &promise_list) {
+    std::shared_ptr<int> winner = std::make_shared<int>(-1);
+    return race(loc, promise_list, winner);
+}
+
 Promise raceAndReject(const Loc &loc, const std::list<Promise> &promise_list) {
-    return race(loc, promise_list).finally(PM_LOC, [loc, promise_list] {
-        for (auto promise : promise_list) {
-            promise.reject(loc);
+    std::shared_ptr<int> winner = std::make_shared<int>(-1);
+    return race(loc, promise_list, winner).finally(PM_LOC, [loc, promise_list, winner] {
+        int index = 0;
+        for (auto it = promise_list.begin(); it != promise_list.end(); ++it, ++index) {
+            if (index != *winner) {
+                auto promise = *it;
+                promise.reject(loc);
+            }
         }
     });
 }
 
 Promise raceAndResolve(const Loc &loc, const std::list<Promise> &promise_list) {
-    return race(loc, promise_list).finally(PM_LOC, [loc, promise_list] {
-        for (auto promise : promise_list) {
-            promise.resolve(loc);
+    std::shared_ptr<int> winner = std::make_shared<int>(-1);
+    return race(loc, promise_list, winner).finally(PM_LOC, [loc, promise_list, winner] {
+        int index = 0;
+        for (auto it = promise_list.begin(); it != promise_list.end(); ++it, ++index) {
+            if (index != *winner) {
+                auto promise = *it;
+                promise.resolve(loc);
+            }
         }
     });
 }
