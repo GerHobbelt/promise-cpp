@@ -99,7 +99,14 @@ public:
             return functor;
         }
         else {
+            // The destructor of a created function-object by call_traits_impl<>::to_std_function
+            // may cause heap corruption error on MSVC.
+            // Thus use std::function directly to avoid the error.
+#if 1
+            return std::function(functor);
+#else
             return call_traits_impl<callable_type>::to_std_function(const_cast<FUNCTOR &>(functor), &FUNCTOR::operator());
+#endif
         }
     }
 };

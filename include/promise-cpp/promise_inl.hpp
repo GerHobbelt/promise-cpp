@@ -5,6 +5,7 @@
 #include <cassert>
 #include <stdexcept>
 #include <vector>
+#include <thread>
 #include <sstream>
 #include <iomanip>
 #include <atomic>
@@ -160,7 +161,10 @@ static inline void join(const std::shared_ptr<PromiseHolder> &left, const std::s
     for (const std::weak_ptr<SharedPromise> &owner_ : owners) {
         std::shared_ptr<SharedPromise> owner = owner_.lock();
         if (owner) {
-            owner->promiseHolder_ = left;
+            std::shared_ptr<Mutex> mutex = owner->obtainLock();
+            std::lock_guard<Mutex> lock(*mutex, std::adopt_lock_t());
+
+            std::atomic_store(&owner->promiseHolder_, left);
             left->owners_.push_back(owner);
         }
     }
@@ -213,12 +217,21 @@ static inline void call(const Loc &loc, std::shared_ptr<Task> task) {
             std::unique_lock<Mutex> lock(*mutex);
 #endif
 
+            // タスクが kResolved／kRejected なときは何もしない
             if (task->state_ != TaskState::kPending) return;
+            // まだ promise が待機中のときは何もしないで処理を戻す。
+            // 後で promise::resolve() や Defer::reject() などが呼び出されたときは kPending でなくなり、このあとに処理が進む。
             if (promiseHolder->state_ == TaskState::kPending) return;
 
+            // promiseHolder が kResolved／kRejected のどちらかになっているので、タスクにもその状態を設定する。
+
+            // 待機中のタスクのリストを取得
             std::list<std::shared_ptr<Task>> &pendingTasks = promiseHolder->pendingTasks_;
+
             //promiseHolder->dump();
 
+            // promiseHolder_->state_ == TaskState::kResolved or kResolved のときは、
+            // task 以外の pendingTasks が存在しないはず。
 #if PROMISE_MULTITHREAD
             while (pendingTasks.front() != task) {
                 mutex->cond_.wait<std::unique_lock<Mutex>>(lock);
@@ -519,11 +532,17 @@ any *PromiseHolder::getUncaughtExceptionHandler() {
 
 any *PromiseHolder::getDefaultUncaughtExceptionHandler() {
     static any defaultUncaughtExceptionHandler = [](Promise &d) {
-        d.fail(PM_LOC, [](const std::runtime_error &err) {
-            fprintf(stderr, "onUncaughtException in line %d, %s\n", __LINE__, err.what());
-        }).fail(PM_LOC, []() {
-            //go here for all other uncaught parameters.
-            fprintf(stderr, "onUncaughtException in line %d\n", __LINE__);
+        // Make the default UncaughtExceptionHandler receive std::exception_ptr
+        // according to the change in any.hpp which not treat exception_ptr as a special case.
+        d.fail(PM_LOC, [](std::exception_ptr ep) {
+            try {
+                std::rethrow_exception(ep);
+            } catch(std::runtime_error &err) {
+                fprintf(stderr, "onUncaughtException in line %d, %s\n", __LINE__, err.what());
+            } catch(...) {
+                //go here for all other uncaught parameters.
+                fprintf(stderr, "onUncaughtException in line %d\n", __LINE__);
+            }
         });
     };
 
@@ -551,7 +570,8 @@ void PromiseHolder::handleUncaughtException(const any &onUncaughtException) {
 #if PROMISE_MULTITHREAD
 std::shared_ptr<Mutex> SharedPromise::obtainLock() const {
     while (true) {
-        std::shared_ptr<Mutex> mutex = this->promiseHolder_->mutex_;
+        auto holder = std::atomic_load(&this->promiseHolder_);
+        std::shared_ptr<Mutex> mutex = holder->mutex_;
         mutex->lock();
 
         // pointer to mutex may be changed after locked, 

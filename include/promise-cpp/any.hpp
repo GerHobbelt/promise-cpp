@@ -31,6 +31,7 @@
 #include <vector>
 #include "add_ons.hpp"
 #include "call_traits.hpp"
+#include <typeinfo>
 
 namespace promise {
 
@@ -49,6 +50,8 @@ inline ValueType any_cast(const any &operand);
 
 class any {
 public: // structors
+
+    std::recursive_mutex mutable mtx;
     any()
         : content(0) {
     }
@@ -70,6 +73,7 @@ public: // structors
     // Move constructor
     any(any &&other)
         : content(other.content) {
+        std::scoped_lock lock (mtx, other.mtx);
         other.content = 0;
     }
 
@@ -88,6 +92,7 @@ public: // structors
     }
 
     any call(const any &arg) const {
+        std::scoped_lock lock (mtx, arg.mtx);
         return content ? content->call(arg) : any();
     }
 
@@ -111,6 +116,7 @@ public: // structors
 public: // modifiers
 
     any & swap(any & rhs) {
+        std::scoped_lock lock (mtx, rhs.mtx);
         std::swap(content, rhs.content);
         return *this;
     }
@@ -128,6 +134,7 @@ public: // modifiers
 
 public: // queries
     bool empty() const {
+        std::scoped_lock lock (mtx);
         return !content;
     }
     
@@ -136,6 +143,7 @@ public: // queries
     }
 
     type_index type() const {
+        std::scoped_lock lock (mtx);
         return content ? content->type() : type_id<void>();
     }
 
@@ -149,6 +157,7 @@ public: // types (public so any_cast can be non-friend)
         virtual type_index type() const = 0;
         virtual placeholder *clone() const = 0;
         virtual any call(const any &arg) const = 0;
+        virtual std::string name() const = 0;
     };
 
     template<typename ValueType>
@@ -169,6 +178,10 @@ public: // types (public so any_cast can be non-friend)
 
         virtual any call(const any &arg) const {
             return any_call(held, arg);
+        }
+
+        virtual std::string name() const {
+            return typeid(ValueType).name();
         }
     public: // representation
         ValueType held;
@@ -258,6 +271,9 @@ struct any_call_t<RET, std::tuple<NOCVR_ARG>, FUNC> {
         using nocvr_argument_type = std::tuple<NOCVR_ARG>;
         using any_arguemnt_type = std::vector<any>;
 
+// don't treat exception_ptr as a special case to make the reject handler
+// receive an exception_ptr instead of an exception reference.
+#if 0
         if (arg.type() == type_id<std::exception_ptr>()) {
             try {
                 std::rethrow_exception(any_cast<std::exception_ptr>(arg));
@@ -266,6 +282,7 @@ struct any_call_t<RET, std::tuple<NOCVR_ARG>, FUNC> {
                 return func(const_cast<NOCVR_ARG &>(ex_arg));
             }
         }
+#endif
 
         if (type_id<NOCVR_ARG>() == type_id<any_arguemnt_type>()) {
             return func(any_cast<NOCVR_ARG &>(arg));
@@ -324,6 +341,9 @@ inline any any_call(const FUNC &func, const any &arg) {
     if (!stdFunc)
         return any();
 
+// don't treat exception_ptr as a special case to make the reject handler
+// receive an exception_ptr instead of an exception reference.
+#if 0
     if (arg.type() == type_id<std::exception_ptr>()) {
         try {
             std::rethrow_exception(any_cast<std::exception_ptr>(arg));
@@ -334,6 +354,7 @@ inline any any_call(const FUNC &func, const any &arg) {
         catch (...) {
         }
     }
+#endif
 
     return any_call_with_ret_t<typename call_traits<FUNC>::result_type, nocvr_argument_type, func_t>::call(stdFunc, arg);
 }
