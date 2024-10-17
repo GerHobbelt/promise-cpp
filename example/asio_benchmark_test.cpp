@@ -84,7 +84,7 @@ Promise test_switch(asio::io_service &io, int coro)
     });
 }
 
-int main() {
+int main(void) {
     asio::io_service io;
 
     doWhile([&](DeferLoop &loop) {

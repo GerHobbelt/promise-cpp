@@ -50,7 +50,7 @@ Promise testTimer(Service &service) {
     });
 }
 
-int main() {
+int main(void) {
 
     Service service;
 

@@ -203,7 +203,7 @@ Promise testTimer(io_service &io) {
     });
 }
 
-int main() {
+int main(void) {
     io_service io;
 
     Promise timer = testTimer(io);

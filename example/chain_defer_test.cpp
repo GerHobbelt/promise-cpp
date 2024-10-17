@@ -12,7 +12,7 @@ promise::Promise writeTo(std::ostream& out) {
     });
 }
 
-int main() {
+int main(void) {
     promise::Promise d = promise::newPromise();
     std::ostringstream out;
     promise::Promise writeToOut = writeTo(out);

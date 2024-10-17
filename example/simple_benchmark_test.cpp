@@ -80,7 +80,7 @@ Promise test_switch(Service &io, int coro) {
 }
 
 
-int main() {
+int main(void) {
     Service io;
 
     int i = 0;

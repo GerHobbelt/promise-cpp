@@ -83,7 +83,7 @@ void testPromiseAll(asio::io_service &io) {
     });
 }
 
-int main() {
+int main(void) {
     asio::io_service io;
 
     testPromiseRace(io);
